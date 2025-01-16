@@ -1,0 +1,7 @@
+casdoor_data/
+s3_data/
+psql_data/
+init_data.json
+pihole_data/
+wireguard_data/
+.env

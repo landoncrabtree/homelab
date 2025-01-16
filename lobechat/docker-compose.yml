@@ -1,0 +1,104 @@
+name: lobe
+
+services:
+
+  network-service:
+    image: alpine
+    container_name: lobe-network
+    ports:
+      - '9000:9000' # MinIO API
+      - '9001:9001' # MinIO Console
+      - '8000:8000' # Casdoor
+      - '3210:3210' # LobeChat
+      - '5432:5432' # Postgres
+    command: tail -f /dev/null
+    restart: unless-stopped
+    networks:
+      - lobe-network
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: postgres
+    volumes:
+      - './psql_data:/var/lib/postgresql/data'
+      - './docker-postgresql-multiple-databases:/docker-entrypoint-initdb.d'
+    environment:
+      - 'POSTGRES_MULTIPLE_DATABASES=lobechat,casdoor,test'
+    env_file:
+      - .env
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER}']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    network_mode: service:network-service
+
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    volumes:
+      - './s3_data:/etc/minio/data'
+    env_file:
+      - .env
+    command: >
+      server /etc/minio/data --address ":9000" --console-address ":9001"
+    restart: unless-stopped
+    network_mode: service:network-service
+
+  casdoor:
+    image: casbin/casdoor
+    container_name: casdoor
+    entrypoint: /bin/sh -c './server --createDatabase=true'
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      - 'RUNNING_IN_DOCKER=true'
+      - 'driverName=postgres'
+      - 'dataSourceName=user=${POSTGRES_USER} password=${POSTGRES_PASSWORD} host=localhost port=5432 sslmode=disable dbname=casdoor'
+      - 'CASDOOR_PORT=8000'
+      - 'origin=http://localhost:8000'
+    volumes:
+      - ./configs/init_data.json:/init_data.json
+    restart: unless-stopped
+    network_mode: service:network-service
+
+  lobechat:
+    image: lobehub/lobe-chat-database
+    container_name: lobechat
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
+      casdoor:
+        condition: service_started
+    env_file:
+      - .env
+    environment:
+      - 'APP_URL=http://localhost:3210'
+      - 'NEXTAUTH_URL=http://localhost:3210/api/auth'
+      - 'NEXT_AUTH_SSO_PROVIDERS=casdoor'
+      - 'AUTH_CASDOOR_ISSUER=http://localhost:8000/'
+      - 'DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:5432/lobechat'
+      - 'S3_ENDPOINT=http://localhost:9000'
+      - 'S3_BUCKET=lobechat'
+      - 'S3_PUBLIC_DOMAIN=http://localhost:9000'
+      - 'S3_ENABLE_PATH_STYLE=1'
+      - 'LLM_VISION_IMAGE_USE_BASE64=1'
+      - 'OPENROUTER_MODEL_LIST=-all,+deepseek/deepseek-chat'
+    restart: unless-stopped
+    network_mode: service:network-service
+
+volumes:
+  psql_data:
+    driver: local
+  s3_data:
+    driver: local
+
+networks:
+  lobe-network:
+    driver: bridge

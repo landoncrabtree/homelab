@@ -1,0 +1,17 @@
+name: pihole
+
+services:
+
+  pihole:
+    image: pihole/pihole
+    container_name: pihole
+    env_file:
+      - .env
+    volumes:
+      - './pihole_data:/etc/pihole'
+      - './pihole_data/etc-dnsmasq.d:/etc/dnsmasq.d'
+    ports:
+      - '53:53/tcp'
+      - '53:53/udp'
+      - '5353:80/tcp'
+    restart: unless-stopped
