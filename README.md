@@ -1,64 +1,57 @@
 # Landon's Homelab
 
-This repository is a collection of assets for my homelab. Right now, it is just Docker compose files for different services.
+This repository is a collection of assets for my homelab. Configurations, documentation, and Docker compose files for different services.
 
-## Services
+## Network Architecture
 
-- [LobeChat](https://github.com/lobehub/lobe-chat) -  open-source, modern-design AI chat framework with support for multiple models.
-    - `casdoor` - authentication provider
-    - `minio` - object storage for file embedding
-    - `postgres` - database
-    - `lobechat` - LobeChat application
-- [Wireguard](https://www.wireguard.com/) -  fast, modern, and secure VPN tunnel.
-- [Pi-hole](https://pi-hole.net/) -  network-wide ad blocker.
+I have a GL-MT6000 (Flint2) router running Tailscale and Adguard Home. It is connected to my ISP's BGW21 modem/router and connected in bridged mode. 
 
-## Server
+This requires some specific configuration of OpenWRT, Adguard, and Tailscale to work properly. See [TAILSCALE.md](TAILSCALE.md) and [ADGUARD.md](ADGUARD.md) for more details on these configurations. 
 
-I am hosting these services on a single Mac mini M1 with 8GB of RAM and 256GB of storage. I am using [Docker Desktop](https://www.docker.com/products/docker-desktop/) to run the services.
+Once properly configured, the network architecture should look like this:
 
-## Deployment
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                        LAN Clients (br-lan)                        │
+│                                                                     │
+│  DNS query (:53) ──► DNAT (iptables) ──► AdGuard Home (:3053)      │
+│                                              │                      │
+│                              ┌───────────────┼───────────────┐      │
+│                              │               │               │      │
+│                          .lan queries   .ts.net queries   All other  │
+│                              │               │               │      │
+│                              ▼               ▼               ▼      │
+│                        dnsmasq (:53)   Tailscale DNS    Quad9/CF    │
+│                        (DHCP leases)  (100.100.100.100) (DoH)      │
+└─────────────────────────────────────────────────────────────────────┘
 
-### LobeChat
+┌─────────────────────────────────────────────────────────────────────┐
+│                     Tailscale Clients (tailscale0)                  │
+│                                                                     │
+│  DNS query (:53) ──► DNAT (iptables) ──► AdGuard Home (:3053)      │
+│                              │                                      │
+│                        (same resolution as LAN clients)             │
+└─────────────────────────────────────────────────────────────────────┘
 
-```bash
-cd lobechat
-cp .env.sample .env
-docker compose up -d
+┌─────────────────────────────────────────────────────────────────────┐
+│                     Router-originated DNS                           │
+│                                                                     │
+│  DNS query ──► resolv.conf (127.0.0.1) ──► dnsmasq (:53)          │
+│                                                │                    │
+│                                        AdGuard Home (:3053)        │
+│                                                │                    │
+│                                          Quad9/CF (DoH)            │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
-Browse to http://localhost:9000 and create a new MinIO secret key. Update the `.env` file with the new secret key. Then, create a new bucket called `lobechat`. From this point, you should be good to go.
+This flow ensures a few things:
+1) All local devices have DNS resolution via DoH using Quad9/CF (better privacy than ISP DNS).
+2) All local devices have built-in ad-blocking (less tracking).
+3) All local devices have DNSSEC validation (more secure).
+4) All local devices can resolve `.lan` hostnames (e.g. `homeassistant.lan`) (easier to memorize).
+5) We can connect remotely via Tailscale and get all the above benefits (same DNS resolution, ad-blocking, DNSSEC validation, etc.).
 
-### Wireguard (Does not work - need to host on linux)
+## Devices
 
-or <https://www.reddit.com/r/WireGuard/comments/vt8nqu/how_to_setup_wireguard_server_in_mac_os/>
-
-```bash
-cd wireguard
-cp .env.sample .env
-docker compose up -d
-```
-
-`.env` expects a bcrypt hash of the password. You can generate one with the following command:
-
-```bash
-docker run --rm -it ghcr.io/wg-easy/wg-easy wgpw 'example'
-```
-
-Browse to http://localhost:51821 and use the password as configured in the `.env` file to login. Next, you can add a new client to the Wireguard server. 
-
-```bash
-cp wireguard_data/wg0.conf /opt/homebrew/etc/wireguard/wg0.conf
-sudo wg-quick up wg0
-```
-
-You should now be connected to the wireguard network. You can test this by running `ping 10.8.0.1` from the command line.
-
-### Pi-hole
-
-```bash
-cd pihole
-cp .env.sample .env
-docker compose up -d
-```
-
-Configure router (usually 192.168.1.1) to use the Pi-hole as the DNS server. 
+- [Raspberry Pi 4](https://www.raspberrypi.com/products/raspberry-pi-4-model-b/) - Running HomeAssistant.
+- [GL-MT6000](https://store-us.gl-inet.com/products/flint-2-gl-mt6000-wi-fi-6-high-performance-home-router) - Flint2 router running Tailscale and Adguard Home.
